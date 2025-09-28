@@ -1,4 +1,4 @@
-# TinyDB TypeScript Client SDK
+# TinyDB JS/TS Client SDK
 
 This package provides an ergonomic TypeScript client for TinyDB. It mirrors the scenarios described in [`docs/CLIENT_SDK.md`](../../docs/CLIENT_SDK.md) and exposes helpers for working with collections, documents, queries, and schema management from Node.js or modern browsers.
 
@@ -46,8 +46,7 @@ Refer to the [project documentation](../../docs/CLIENT_SDK.md) for more end-to-e
 
 ## Examples
 
--   `examples/basic` &mdash; runnable Vitest suite that exercises the SDK with mocked fetch responses.
--   `examples/live` &mdash; CLI script that connects to a real TinyDB API (requires endpoint + API key).
+-   `example` &mdash; CLI script that connects to a real TinyDB API (requires endpoint + API key).
 
 ## Development
 
@@ -59,4 +58,4 @@ npm test
 
 ## License
 
-MIT
+MIT © CUBIS Labs
