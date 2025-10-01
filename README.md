@@ -38,6 +38,7 @@ const created = await users.create({
     role: 'Developer',
     age: 29,
 });
+console.log(`Document version: ${created.version}`);
 
 const refreshed = await users.get(created.id);
 ```

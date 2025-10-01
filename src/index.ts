@@ -56,6 +56,7 @@ export interface DocumentRecord<T = Record<string, any>> {
     key: string;
     key_numeric?: number | null;
     data: DocumentData<T>;
+    version: number;
     created_at: string;
     updated_at: string;
     deleted_at: string | null;
@@ -209,6 +210,7 @@ interface DocumentPayload {
     key: string;
     key_numeric?: number | null;
     data: string | null;
+    version?: number;
     created_at: string;
     updated_at: string;
     deleted_at?: string | null;
@@ -264,6 +266,9 @@ function parseDocument<T>(payload: DocumentPayload): DocumentRecord<T> {
     } else {
         (data as any)._doc_id = payload.id;
     }
+    const version = typeof payload.version === 'number' && !Number.isNaN(payload.version)
+        ? payload.version
+        : 1;
     return {
         id: payload.id,
         tenant_id: payload.tenant_id,
@@ -271,6 +276,7 @@ function parseDocument<T>(payload: DocumentPayload): DocumentRecord<T> {
         key: payload.key,
         key_numeric: payload.key_numeric ?? undefined,
         data,
+        version,
         created_at: payload.created_at,
         updated_at: payload.updated_at,
         deleted_at: payload.deleted_at ?? null,

@@ -127,6 +127,7 @@ describe('TinyDB TypeScript client', () => {
             key: 'doc-1',
             key_numeric: null,
             data: JSON.stringify({ name: 'Alice' }),
+            version: 1,
             created_at: '2025-09-26T00:01:00Z',
             updated_at: '2025-09-26T00:01:00Z',
             deleted_at: null,
@@ -175,12 +176,15 @@ describe('TinyDB TypeScript client', () => {
         const created = await users.create({ name: 'Alice' });
         expect(created.data.name).toBe('Alice');
         expect(created.data._doc_id).toBe('doc-1');
+    expect(created.version).toBe(1);
 
         const fetched = await users.get(created.id);
         expect(fetched.id).toBe(created.id);
+    expect(fetched.version).toBe(1);
 
         const fetchedByPk = await users.get(created.key, { pk: true });
         expect(fetchedByPk.id).toBe(created.id);
+    expect(fetchedByPk.version).toBe(1);
 
         const manyResult = await users.create([
             { name: 'Bob' },
@@ -191,6 +195,8 @@ describe('TinyDB TypeScript client', () => {
         expect(many).toHaveLength(2);
         expect(many[0].data.name).toBe('Bob');
         expect(many[1].data.name).toBe('Eve');
+    expect(many[0].version).toBe(1);
+    expect(many[1].version).toBe(1);
 
         await users.delete([created.id, many[0].id]);
         await users.purge(created.id);
@@ -315,6 +321,7 @@ describe('TinyDB TypeScript client', () => {
                                 data: JSON.stringify({ name: 'Sync' }),
                                 created_at: '2025-09-26T00:04:00Z',
                                 updated_at: '2025-09-26T00:04:00Z',
+                                version: 4,
                             },
                         },
                     ],
