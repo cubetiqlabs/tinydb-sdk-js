@@ -11,6 +11,7 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: write # need write to create release
+            id-token: write # For npm provenance (recommended for security)
         steps:
             - name: Checkout (full history for tags & logs)
               uses: actions/checkout@v5
@@ -81,7 +82,7 @@ jobs:
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: |
-                  npm publish --access public
+                  npm publish --access public --provenance
 
             - name: Generate release notes
               id: notes
@@ -90,7 +91,7 @@ jobs:
                   TAG_REF="${GITHUB_REF}"
                   TAG="${TAG_REF#refs/tags/}"
                   echo "Tag: $TAG"
-                  PREV_TAG=$(git tag --list 'sdk-ts-v*' --sort=-v:refname | grep -v "^$TAG$" | head -n1 || true)
+                  PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -v "^$TAG$" | head -n1 || true)
                   echo "Previous tag: ${PREV_TAG:-<none>}"
                   CHANGELOG_TMP=$(mktemp)
                   echo "# $TAG" >> "$CHANGELOG_TMP"
@@ -98,16 +99,16 @@ jobs:
                   if [ -n "$PREV_TAG" ]; then
                     echo "Changes since $PREV_TAG:" >> "$CHANGELOG_TMP"
                     echo >> "$CHANGELOG_TMP"
-                    git log --pretty=format:'- %s (%h)' "$PREV_TAG..HEAD" -- sdk/ts || true >> "$CHANGELOG_TMP"
+                    git log --pretty=format:'- %s (%h)' "$PREV_TAG..HEAD" -- . || true >> "$CHANGELOG_TMP"
                   else
                     echo "Initial release." >> "$CHANGELOG_TMP"
                     echo >> "$CHANGELOG_TMP"
-                    git log --pretty=format:'- %s (%h)' -n 50 -- sdk/ts || true >> "$CHANGELOG_TMP"
+                    git log --pretty=format:'- %s (%h)' -n 50 -- . || true >> "$CHANGELOG_TMP"
                   fi
                   echo >> "$CHANGELOG_TMP"
                   echo "Generated notes:" >&2
                   cat "$CHANGELOG_TMP" >&2
-                  BODY=$(sed 's/`/\\`/g' "$CHANGELOG_TMP")
+                  BODY=$(cat "$CHANGELOG_TMP" | jq -Rs .)
                   echo "body<<EOF" >> $GITHUB_OUTPUT
                   echo "$BODY" >> $GITHUB_OUTPUT
                   echo "EOF" >> $GITHUB_OUTPUT
