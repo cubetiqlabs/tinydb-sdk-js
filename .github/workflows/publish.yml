@@ -119,9 +119,10 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   TAG="${{ steps.notes.outputs.tag }}"
-                  BODY="${{ steps.notes.outputs.body }}"
+                  # The body is already JSON-encoded from the previous step
+                  BODY='${{ steps.notes.outputs.body }}'
                   echo "Creating release for $TAG"
-                  jq -n --arg tag "$TAG" --arg name "$TAG" --arg body "$BODY" '{ tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false }' > release.json
+                  jq -n --arg tag "$TAG" --arg name "$TAG" --argjson body "$BODY" '{ tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false }' > release.json
                   curl -sSL -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
                     "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
                     -d @release.json | jq -r '.html_url // .message'
