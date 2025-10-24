@@ -57,6 +57,25 @@ npm run build
 npm test
 ```
 
+## Publishing Releases
+
+To create a release and publish to npm:
+
+```bash
+npm run release
+```
+
+This script will:
+1. Read the version from `package.json`
+2. Create a git tag with format `v{version}` (e.g., `v0.1.0`)
+3. Push the tag to origin
+4. Trigger the GitHub Actions publish workflow
+5. Automatically build and publish to npm
+
+For detailed information, see [`scripts/TAG-RELEASE.md`](scripts/TAG-RELEASE.md).
+
 ## License
 
 MIT © CUBIS Labs
+
+````

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest/dist/index.js';
+import { describe, it, expect, vi } from 'vitest';
 import {
     TinyDB,
     TinyDBError,
