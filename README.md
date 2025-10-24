@@ -1,6 +1,6 @@
 # TinyDB JS/TS Client SDK
 
-This package provides an ergonomic TypeScript client for TinyDB. It mirrors the scenarios described in [`docs/CLIENT_SDK.md`](../../docs/CLIENT_SDK.md) and exposes helpers for working with collections, documents, queries, and schema management from Node.js or modern browsers.
+This package provides an ergonomic TypeScript client for TinyDB. It mirrors the scenarios described in [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md) and exposes helpers for working with collections, documents, queries, and schema management from Node.js or modern browsers.
 
 > **Status:** Work in progress. The public surface may change before the first stable release.
 

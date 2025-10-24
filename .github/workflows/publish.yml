@@ -80,7 +80,7 @@ jobs:
 
             - name: Publish to npm
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  NODE_AUTH_TOKEN: ${{ secrets.TINYDB_NPM_TOKEN }}
               run: |
                   npm publish --access public --provenance
 

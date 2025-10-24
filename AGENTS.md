@@ -26,6 +26,7 @@
 -   Keep dependencies up to date
 -   Every release must be added to `CHANGELOG.md` and add version tag, dated, with summary of changes (features, fixes, breaking changes)
 -   `docs/API_REFERENCE.md` must be updated for any public API changes and API documentation must be accurate and up to date. Also update code examples into `docs/API_EXAMPLES.md` as needed.
+-   `README.md` and other user docs must be updated for any user-facing changes and kept accurate.
 
 ## Prohibited actions
 
