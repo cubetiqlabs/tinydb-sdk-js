@@ -9,7 +9,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@tinydb/client": "file:.."
+    "@tinydb/client": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
