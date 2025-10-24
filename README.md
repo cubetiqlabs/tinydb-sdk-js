@@ -1,6 +1,6 @@
 # TinyDB JS/TS Client SDK
 
-This package provides an ergonomic TypeScript client for TinyDB. It mirrors the scenarios described in [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md) and exposes helpers for working with collections, documents, queries, and schema management from Node.js or modern browsers.
+This package provides an ergonomic TypeScript client for TinyDB. It mirrors the scenarios described in [`docs/CLIENT_SDK.md`](../../docs/CLIENT_SDK.md) and exposes helpers for working with collections, documents, queries, and schema management from Node.js or modern browsers.
 
 > **Status:** Work in progress. The public surface may change before the first stable release.
 
@@ -47,7 +47,9 @@ Refer to the [project documentation](../../docs/CLIENT_SDK.md) for more end-to-e
 
 ## Examples
 
--   `example` &mdash; CLI script that connects to a real TinyDB API (requires endpoint + API key).
+-   [See example code](./example/src/main.ts) &mdash; CLI script that connects to a real TinyDB API (requires endpoint + API key). Demonstrates collection creation, document CRUD, querying, and sync.
+-   [Full API Reference](./docs/API_REFERENCE.md) &mdash; Comprehensive reference for all SDK classes, methods, and types.
+-   [API Examples](./docs/API_EXAMPLES.md) &mdash; 50+ practical code examples for common tasks.
 
 ## Development
 
@@ -66,6 +68,7 @@ npm run release
 ```
 
 This script will:
+
 1. Read the version from `package.json`
 2. Create a git tag with format `v{version}` (e.g., `v0.1.0`)
 3. Push the tag to origin
@@ -74,8 +77,10 @@ This script will:
 
 For detailed information, see [`scripts/TAG-RELEASE.md`](scripts/TAG-RELEASE.md).
 
+## Contributors
+
+-   Sambo Chea <cs@cubetiqs.com>
+
 ## License
 
 MIT © CUBIS Labs
-
-````
