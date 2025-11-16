@@ -12,7 +12,7 @@
     "@tinydb/client": "^0.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.5.0",
+    "@types/node": "^24.0.0",
     "dotenv": "^17.0.0",
     "tsx": "^4.15.7",
     "typescript": "^5.5.4"
