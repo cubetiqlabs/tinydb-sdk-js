@@ -5,17 +5,39 @@ All notable changes to the TinyDB TypeScript Client SDK are documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2025-11-19
+
+### Added
+
+- **User/Tenant Information**
+  - New `me()` method on `TinyDB` instance to fetch current user and tenant information
+  - New `Me` interface exported with tenant and app details including:
+    - `tenant_id` - Unique identifier for the tenant
+    - `tenant_name` - Display name of the tenant
+    - `app_id` - Optional application identifier
+    - `app_name` - Optional application name
+    - `status` - Current status of the account
+    - `key_prefix` - API key prefix for identification
+    - `created_at` - Account creation timestamp
+    - `updated_at` - Last update timestamp
+
+### Changed
+
+- Code formatting improvements (indentation standardization)
+
 ## [0.1.0] - 2025-01-20
 
 ### Added
 
 - **Initial Release** - Complete TypeScript/JavaScript SDK for TinyDB
 - **Collection Management**
+
   - Create, retrieve, and manage collections
   - Schema definition with field validation
   - Automatic collection creation on first access
 
 - **Document Operations**
+
   - Create single and batch documents
   - Get document by ID or primary key
   - Update documents (full replacement)
@@ -23,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Permanent purge operations
 
 - **Querying**
+
   - Comprehensive query DSL with filtering
   - Support for operators: eq, neq, lt, lte, gt, gte, contains, startsWith, endsWith, in, notIn, exists, isNull, notNull
   - AND/OR logical operators
@@ -32,34 +55,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cursor-based pagination for stable pagination
 
 - **Synchronization**
+
   - Incremental sync with date-based queries
   - Cursor-based sync for large datasets
   - Real-time subscription to collection changes via WebSocket
   - Support for change_type indicators (upsert, delete)
 
 - **Offline Support**
+
   - Offline mode with operation queuing
   - Automatic retry of queued operations
   - Manual queue flushing via `flushOfflineQueue()`
   - OfflineError with operation details
 
 - **Error Handling**
+
   - TinyDBError with status codes and error details
   - OfflineError for queued operations
   - Detailed validation error reporting
   - Graceful error recovery
 
 - **Type Safety**
+
   - Full TypeScript support with generics
   - Type definitions for all APIs and data structures
   - Strict mode compilation
 
 - **Performance**
+
   - ESM (14.94 KB) and CJS (16.07 KB) bundles
   - Efficient field selection to reduce data transfer
   - Cursor-based pagination for scalable sync
 
 - **Documentation**
+
   - Comprehensive API Reference (docs/API_REFERENCE.md)
   - 50+ practical code examples (docs/API_EXAMPLES.md)
   - Quick start guide in README
@@ -75,18 +104,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 #### Core Client
+
 - `TinyDB` class for database access
 - `CollectionBuilder` for fluent API
 - `Collection<T>` for type-safe operations
 - Support for custom fetch implementations
 
 #### Document Types
+
 - `DocumentRecord<T>` - Document with metadata
 - `DocumentData<T>` - Type-safe document data
 - `Pagination` - Pagination metadata
 - Multiple field types: string, number, boolean, uuid, date, datetime, object, array
 
 #### Query Capabilities
+
 - Complex filtering with nested conditions
 - String operations (startsWith, endsWith, contains)
 - Numeric comparisons (lt, lte, gt, gte)
@@ -96,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Result limiting and pagination
 
 #### Offline Capabilities
+
 - Transparent operation queuing
 - Connection status handling
 - Automatic retry mechanisms
@@ -122,6 +155,7 @@ None - Initial release.
 ### Testing
 
 - ✅ 7 comprehensive unit tests covering:
+
   - Collection creation with schema
   - Document lifecycle (create, get, update, delete)
   - Bulk operations
@@ -191,6 +225,7 @@ To release a new version:
 6. GitHub Actions automatically publishes to npm
 
 All releases include:
+
 - ✅ Pre-flight quality checks (lint, test, build)
 - ✅ Git tag in semantic version format (v0.1.0)
 - ✅ npm provenance attestation
