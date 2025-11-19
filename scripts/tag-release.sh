@@ -23,7 +23,8 @@ if [ ! -f "$PROJECT_DIR/package.json" ]; then
 fi
 
 # Extract version from package.json
-VERSION=$(node -p "require('$PROJECT_DIR/package.json').version" 2>/dev/null || true)
+# Use grep and sed instead of require() for ES module compatibility
+VERSION=$(grep -o '"version": *"[^"]*"' "$PROJECT_DIR/package.json" | sed 's/"version": *"\([^"]*\)"/\1/')
 
 if [ -z "$VERSION" ]; then
   echo -e "${RED}Error: Could not extract version from package.json${NC}"
