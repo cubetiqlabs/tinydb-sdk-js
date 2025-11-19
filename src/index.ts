@@ -216,7 +216,7 @@ interface DocumentPayload {
   deleted_at?: string | null;
 }
 
-interface Me {
+export interface Me {
   tenant_id: string;
   tenant_name: string;
   app_id?: string;
