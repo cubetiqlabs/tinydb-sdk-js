@@ -14,7 +14,7 @@ jobs:
             id-token: write # For npm provenance (recommended for security)
         steps:
             - name: Checkout (full history for tags & logs)
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   fetch-depth: 0
             - name: Setup Node.js
