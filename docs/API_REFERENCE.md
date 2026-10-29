@@ -41,8 +41,30 @@ interface TinyDBOptions {
     appId?: string;                // Optional application ID
     offlineMode?: boolean;         // Enable offline support (default: false)
     fetch?: FetchLike;             // Custom fetch implementation
+    retry?: RetryOptions | false;  // Retry policy (default: 2 retries); false disables
+}
+
+interface RetryOptions {
+    retries?: number;              // Retries after the first attempt (default 2)
+    baseDelayMs?: number;          // First backoff step, doubles each retry, full jitter (default 200)
+    maxDelayMs?: number;           // Cap of one backoff step (default 5000)
+    maxRetryAfterMs?: number;      // Longest Retry-After to wait for (default 30000)
 }
 ```
+
+#### Retries and idempotency
+
+Transient failures are retried with exponential backoff and full jitter: network errors and `429`/`502`/`503`/`504`. A `Retry-After` header replaces the computed delay. A `429` without `Retry-After` (a daily quota) or with one longer than `maxRetryAfterMs` is **not** retried; the `RateLimitError` carries `retryAfterMs`.
+
+GET, PUT and DELETE are retried freely. A `POST` is retried only when you pass an idempotency key, because repeating it could otherwise create a second document:
+
+```typescript
+import { newIdempotencyKey } from '@tinydb/client';
+
+await users.create({ name: 'Alice' }, { idempotencyKey: newIdempotencyKey() });
+```
+
+The server stores the first response for 24 hours and replays it for the same key and body (see the server's API docs).
 
 ### Example
 
@@ -480,23 +502,52 @@ while (true) {
 }
 ```
 
-### Subscribe
-
-Real-time subscription to collection changes (WebSocket).
+### Iterating every result
 
 ```typescript
-interface ChangeEvent<T = Record<string, any>> {
-    type: 'create' | 'update' | 'delete';
-    document: DocumentRecord<T>;
-    timestamp: string;
+for await (const doc of users.iterate({ pageSize: 200 })) { /* every document */ }
+for await (const doc of users.queryAll({ where: { and: [{ status: { eq: 'active' } }] } })) { /* every match */ }
+for await (const change of users.syncAll({ since: lastSync })) { /* every change, following the cursor */ }
+```
+
+Pages are fetched lazily; break out of the loop to stop.
+
+### Watch
+
+Streams changes to a collection over Server-Sent Events and **resumes** after a disconnect.
+
+```typescript
+interface ChangeEvent {
+    seq?: number;      // cursor: pass as `since` to resume after this event
+    type: 'create' | 'update' | 'delete' | 'lagged';
+    collection: string;
+    id?: string;
+    data?: string;     // JSON of the document (absent on delete)
+    ts?: string;
 }
 
-const unsubscribe = users.subscribe((change) => {
-    console.log(`Document ${change.type}:`, change.document);
-});
+interface WatchOptions {
+    since?: number;            // resume after this seq; omit for live-only
+    signal?: AbortSignal;      // stop watching
+    reconnect?: boolean;       // default true
+    reconnectDelayMs?: number; // default 1000
+}
 
-// Later: unsubscribe from changes
-unsubscribe();
+const ac = new AbortController();
+for await (const ev of users.watch({ since: savedSeq, signal: ac.signal })) {
+    apply(ev);
+    savedSeq = ev.seq ?? savedSeq;   // persist after you have processed it
+}
+```
+
+When the connection drops, `watch` reconnects with `since` set to the last `seq` it delivered, so changes recorded in the meantime are replayed. `lagged` means this consumer was too slow; the missed changes follow it. Replayed events omit `key`/`key_numeric`. HTTP errors (bad key, unknown collection) are thrown and not retried.
+
+### Account
+
+```typescript
+await db.usage(30);        // plan, limits, usage and daily request counts
+await db.verifyAudit();    // { ok, checked, last_hash, unsealed, broken_seq?, reason? }
+await db.audit({ operation: 'update', limit: 50, since: new Date('2026-01-01') });
 ```
 
 ---
@@ -521,6 +572,20 @@ class TinyDBError extends Error {
     )
 }
 ```
+
+### Typed errors
+
+All extend `TinyDBError` (`status`, `code`, `details`), so existing `instanceof TinyDBError` checks keep working.
+
+| Class | Status | Meaning |
+| --- | --- | --- |
+| `UnauthorizedError` | 401 | Missing or invalid API key |
+| `ForbiddenError` | 403 | Key not allowed, tenant suspended, or a plan limit reached |
+| `NotFoundError` | 404 | Collection or document not found |
+| `ConflictError` | 409, 412 | Version conflict or duplicate key |
+| `ValidationError` | 400, 422 | Request or document rejected |
+| `RateLimitError` | 429 | Rate or daily quota; `retryAfterMs` when known |
+| `ServerError` | 5xx | Server failure |
 
 ### OfflineError
 

@@ -5,6 +5,21 @@ All notable changes to the TinyDB TypeScript Client SDK are documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Automatic retries with exponential backoff and full jitter for network errors and `429`/`502`/`503`/`504`, honouring `Retry-After` (`retry` option; `retry: false` disables). `POST` is only retried with an idempotency key.
+- `WriteOptions.idempotencyKey` on `create()` and `newIdempotencyKey()`; sent as `Idempotency-Key`.
+- Typed errors (`UnauthorizedError`, `ForbiddenError`, `NotFoundError`, `ConflictError`, `ValidationError`, `RateLimitError`, `ServerError`), all subclasses of `TinyDBError`.
+- Async iterators `iterate()`, `queryAll()` and `syncAll()` that page lazily.
+- `watch()`: resumable change stream over Server-Sent Events (`since`, automatic reconnect with the last `seq`, `lagged` events).
+- `usage()`, `verifyAudit()` and `audit()` on the client.
+
+### Changed
+
+- API reference no longer documents the non-existent `subscribe()`; use `watch()`.
+
 ## [0.1.1] - 2025-11-19
 
 ### Added

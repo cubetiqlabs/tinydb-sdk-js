@@ -15,6 +15,44 @@ export interface TinyDBOptions {
   appId?: string;
   offlineMode?: boolean;
   fetch?: FetchLike;
+  /**
+   * Retry policy for transient failures. Pass `false` to disable retries.
+   * Idempotent requests (GET, PUT, DELETE) are retried on network errors and
+   * 429/502/503/504; POST and PATCH only when an `idempotencyKey` was given,
+   * because repeating them could otherwise duplicate the operation.
+   */
+  retry?: RetryOptions | false;
+}
+
+export interface RetryOptions {
+  /** Retries after the first attempt. Default 2. */
+  retries?: number;
+  /** First backoff step in ms; doubles each retry, with full jitter. Default 200. */
+  baseDelayMs?: number;
+  /** Upper bound of one backoff step in ms. Default 5000. */
+  maxDelayMs?: number;
+  /**
+   * Longest `Retry-After` the client will wait for. A longer wait is not
+   * retried: the RateLimitError is thrown so the caller can decide. Default 30000.
+   */
+  maxRetryAfterMs?: number;
+  /** Test hooks. */
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+}
+
+/** Options accepted by write calls. */
+export interface WriteOptions {
+  /**
+   * Makes the write safe to retry: the server stores the first response under
+   * this key for 24 hours and replays it for a repeat. Use `newIdempotencyKey()`.
+   */
+  idempotencyKey?: string;
+}
+
+/** A fresh random key for `WriteOptions.idempotencyKey`. */
+export function newIdempotencyKey(): string {
+  return globalThis.crypto.randomUUID();
 }
 
 export interface PrimaryKeyConfig {
@@ -170,6 +208,63 @@ export class TinyDBError extends Error {
     this.status = status;
     this.code = code;
     this.details = details;
+  }
+}
+
+/** 401: missing or invalid API key. */
+export class UnauthorizedError extends TinyDBError {
+  constructor(message: string, code?: string, details?: any) {
+    super(message, 401, code, details);
+    this.name = "UnauthorizedError";
+  }
+}
+
+/** 403: the key may not do this, the tenant is suspended, or a plan limit was reached. */
+export class ForbiddenError extends TinyDBError {
+  constructor(message: string, code?: string, details?: any) {
+    super(message, 403, code, details);
+    this.name = "ForbiddenError";
+  }
+}
+
+export class NotFoundError extends TinyDBError {
+  constructor(message: string, code?: string, details?: any) {
+    super(message, 404, code, details);
+    this.name = "NotFoundError";
+  }
+}
+
+/** 409/412: the document changed underneath you, or the key already exists. */
+export class ConflictError extends TinyDBError {
+  constructor(message: string, status: number, code?: string, details?: any) {
+    super(message, status, code, details);
+    this.name = "ConflictError";
+  }
+}
+
+/** 400/422: the request or the document was rejected as invalid. */
+export class ValidationError extends TinyDBError {
+  constructor(message: string, status: number, code?: string, details?: any) {
+    super(message, status, code, details);
+    this.name = "ValidationError";
+  }
+}
+
+/** 429: rate or daily quota exceeded. `retryAfterMs` is set when the server said when to retry. */
+export class RateLimitError extends TinyDBError {
+  readonly retryAfterMs?: number;
+  constructor(message: string, code?: string, details?: any, retryAfterMs?: number) {
+    super(message, 429, code, details);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** 5xx: the server failed. Often safe to retry an idempotent request. */
+export class ServerError extends TinyDBError {
+  constructor(message: string, status: number, code?: string, details?: any) {
+    super(message, status, code, details);
+    this.name = "ServerError";
   }
 }
 
@@ -372,8 +467,33 @@ async function parseError(response: Response): Promise<TinyDBError> {
     response.statusText ||
     "Request failed";
   const code = payload?.code || payload?.error;
-  return new TinyDBError(message, response.status, code, payload);
+  const status = response.status;
+  if (status === 401) return new UnauthorizedError(message, code, payload);
+  if (status === 403) return new ForbiddenError(message, code, payload);
+  if (status === 404) return new NotFoundError(message, code, payload);
+  if (status === 409 || status === 412) return new ConflictError(message, status, code, payload);
+  if (status === 400 || status === 422) return new ValidationError(message, status, code, payload);
+  if (status === 429) {
+    return new RateLimitError(message, code, payload, parseRetryAfter(response.headers.get("Retry-After")));
+  }
+  if (status >= 500) return new ServerError(message, status, code, payload);
+  return new TinyDBError(message, status, code, payload);
 }
+
+/** Parses a Retry-After header (seconds or an HTTP date) to milliseconds. */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const at = Date.parse(value);
+  if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
+  return undefined;
+}
+
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE", "OPTIONS"]);
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 class CollectionBuilder<T extends Record<string, any> = Record<string, any>>
   implements PromiseLike<CollectionClient<T>>
@@ -444,6 +564,93 @@ interface RequestOptions<T> {
   headers?: Record<string, string>;
   parser?: RequestParser<T>;
   allowOfflineQueue?: boolean;
+  idempotencyKey?: string;
+}
+
+function backoff(
+  policy: { baseDelayMs: number; maxDelayMs: number },
+  attempt: number,
+  random: () => number
+): number {
+  const ceiling = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** attempt);
+  return Math.floor(random() * ceiling);
+}
+
+export interface Usage {
+  plan?: string;
+  suspended: boolean;
+  suspended_reason?: string;
+  limits: {
+    requests_per_day: number;
+    storage_bytes: number;
+    documents: number;
+    collections: number;
+    applications: number;
+    api_keys: number;
+  };
+  usage: { documents: number; storage_bytes: number };
+  collections: number;
+  applications: number;
+  api_keys: number;
+  requests: { day: string; requests: number }[];
+}
+
+export interface AuditVerification {
+  ok: boolean;
+  checked: number;
+  first_seq?: number;
+  last_seq?: number;
+  /** Keep this outside the database to detect truncation on a later check. */
+  last_hash?: string;
+  unsealed: number;
+  broken_seq?: number;
+  reason?: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  collection_id: string;
+  document_id: string;
+  document_version: number;
+  operation: string;
+  actor?: string;
+  old_data?: string;
+  new_data?: string;
+  created_at: string;
+  seq?: number;
+  hash?: string;
+}
+
+export interface AuditQuery {
+  limit?: number;
+  collection?: string;
+  documentId?: string;
+  operation?: string;
+  actor?: string;
+  since?: string | Date;
+  until?: string | Date;
+  sort?: string;
+}
+
+/** A change delivered by `watch`. `seq` is the cursor to resume from. */
+export interface ChangeEvent {
+  seq?: number;
+  type: "create" | "update" | "delete" | "lagged";
+  collection: string;
+  id?: string;
+  data?: string;
+  key?: string;
+  ts?: string;
+}
+
+export interface WatchOptions {
+  /** Resume after this seq (the last event you processed). Omit for live-only. */
+  since?: number;
+  signal?: AbortSignal;
+  /** Reconnect (resuming from the last seq) when the stream drops. Default true. */
+  reconnect?: boolean;
+  /** Wait before reconnecting, ms. Default 1000. */
+  reconnectDelayMs?: number;
 }
 
 export class TinyDB {
@@ -453,6 +660,7 @@ export class TinyDB {
   private readonly offlineMode: boolean;
   private readonly baseHeaders: Record<string, string>;
   private readonly offlineQueue: QueuedOperation[] = [];
+  private readonly retryPolicy: Required<Omit<RetryOptions, "sleep" | "random">> & Pick<RetryOptions, "sleep" | "random">;
 
   constructor(private readonly options: TinyDBOptions) {
     if (!options?.endpoint) {
@@ -465,6 +673,15 @@ export class TinyDB {
     this.appId = options.appId;
     this.offlineMode = Boolean(options.offlineMode);
     this.fetchImpl = ensureFetch(options.fetch);
+    const retry = options.retry === false ? { retries: 0 } : options.retry ?? {};
+    this.retryPolicy = {
+      retries: retry.retries ?? 2,
+      baseDelayMs: retry.baseDelayMs ?? 200,
+      maxDelayMs: retry.maxDelayMs ?? 5000,
+      maxRetryAfterMs: retry.maxRetryAfterMs ?? 30000,
+      sleep: retry.sleep,
+      random: retry.random,
+    };
     this.baseHeaders = {
       Accept: "application/json",
       "X-API-Key": options.apiKey,
@@ -599,16 +816,20 @@ export class TinyDB {
         );
       }
     }
+    if (options.idempotencyKey) {
+      headers["Idempotency-Key"] = options.idempotencyKey;
+    }
     const init: RequestInit = {
       method: options.method,
       headers,
       body,
     };
     try {
-      const response = await this.fetchImpl(url, init);
-      if (!response.ok) {
-        throw await parseError(response.clone());
-      }
+      const response = await this.sendWithRetry(
+        url,
+        init,
+        IDEMPOTENT_METHODS.has(options.method) || Boolean(options.idempotencyKey)
+      );
       return await parser(response.clone());
     } catch (error) {
       if (
@@ -630,6 +851,97 @@ export class TinyDB {
       }
       throw error;
     }
+  }
+
+  /**
+   * Sends one request, retrying transient failures with exponential backoff and
+   * full jitter. A `Retry-After` from the server replaces the computed delay.
+   * Returns the successful response or throws the typed error.
+   */
+  private async sendWithRetry(url: string, init: RequestInit, safeToRepeat: boolean): Promise<Response> {
+    const policy = this.retryPolicy;
+    const sleep = policy.sleep ?? defaultSleep;
+    const random = policy.random ?? Math.random;
+    for (let attempt = 0; ; attempt++) {
+      const canRetry = safeToRepeat && attempt < policy.retries;
+      let response: Response;
+      try {
+        response = await this.fetchImpl(url, init);
+      } catch (error) {
+        if (canRetry && isNetworkError(error)) {
+          await sleep(backoff(policy, attempt, random));
+          continue;
+        }
+        throw error;
+      }
+      if (response.ok) {
+        return response;
+      }
+      const retryAfter = parseRetryAfter(response.headers.get("Retry-After"));
+      if (canRetry && RETRYABLE_STATUS.has(response.status)) {
+        // A 429 without Retry-After is usually a daily quota: waiting seconds will not help.
+        const waitable = response.status !== 429 || (retryAfter !== undefined && retryAfter <= policy.maxRetryAfterMs);
+        if (waitable) {
+          await sleep(retryAfter ?? backoff(policy, attempt, random));
+          continue;
+        }
+      }
+      throw await parseError(response.clone());
+    }
+  }
+
+  /** @internal Opens a long-lived streaming response (Server-Sent Events). */
+  async openStream(path: string, query: Record<string, string | undefined>, signal?: AbortSignal): Promise<Response> {
+    const url = buildURL(this.endpoint, path, query);
+    const response = await this.fetchImpl(url, {
+      method: "GET",
+      headers: { ...this.baseHeaders, Accept: "text/event-stream" },
+      signal,
+    });
+    if (!response.ok) {
+      throw await parseError(response.clone());
+    }
+    return response;
+  }
+
+  /** Where the tenant stands against its plan: limits, usage and daily request counts. */
+  async usage(days?: number): Promise<Usage> {
+    return this.requestInternal<Usage>({
+      method: "GET",
+      path: "/api/usage",
+      query: { days: days === undefined ? undefined : String(days) },
+      parser: jsonParser,
+    });
+  }
+
+  /** Checks the tenant's tamper-evident audit chain. */
+  async verifyAudit(): Promise<AuditVerification> {
+    return this.requestInternal<AuditVerification>({
+      method: "GET",
+      path: "/api/audit/verify",
+      parser: jsonParser,
+    });
+  }
+
+  /** Lists audit entries, newest first by default. */
+  async audit(params: AuditQuery = {}): Promise<AuditEntry[]> {
+    const query: Record<string, string | undefined> = {
+      limit: params.limit === undefined ? undefined : String(params.limit),
+      collection: params.collection,
+      document_id: params.documentId,
+      operation: params.operation,
+      actor: params.actor,
+      since: params.since instanceof Date ? params.since.toISOString() : params.since,
+      until: params.until instanceof Date ? params.until.toISOString() : params.until,
+      sort: params.sort,
+    };
+    const payload = await this.requestInternal<AuditEntry[] | { items: AuditEntry[] }>({
+      method: "GET",
+      path: "/api/audit",
+      query,
+      parser: jsonParser,
+    });
+    return Array.isArray(payload) ? payload : payload.items ?? [];
   }
 
   async me(): Promise<Me> {
@@ -737,10 +1049,11 @@ export class CollectionClient<
     return parseDocument<T>(payload);
   }
 
-  async create(doc: Record<string, any>): Promise<DocumentRecord<T>>;
-  async create(docs: Record<string, any>[]): Promise<DocumentRecord<T>[]>;
+  async create(doc: Record<string, any>, options?: WriteOptions): Promise<DocumentRecord<T>>;
+  async create(docs: Record<string, any>[], options?: WriteOptions): Promise<DocumentRecord<T>[]>;
   async create(
-    docOrDocs: Record<string, any> | Record<string, any>[]
+    docOrDocs: Record<string, any> | Record<string, any>[],
+    options: WriteOptions = {}
   ): Promise<DocumentRecord<T> | DocumentRecord<T>[]> {
     if (Array.isArray(docOrDocs)) {
       if (docOrDocs.length === 0) {
@@ -756,6 +1069,7 @@ export class CollectionClient<
         body: docOrDocs,
         parser: jsonParser,
         allowOfflineQueue: true,
+        idempotencyKey: options.idempotencyKey,
       });
       const items = response?.items ?? [];
       return items.map((item) => parseDocument<T>(item));
@@ -766,6 +1080,7 @@ export class CollectionClient<
       body: docOrDocs,
       parser: jsonParser,
       allowOfflineQueue: true,
+      idempotencyKey: options.idempotencyKey,
     });
     return parseDocument<T>(payload);
   }
@@ -900,6 +1215,98 @@ export class CollectionClient<
     };
   }
 
+  /**
+   * Iterates every document of the collection, fetching `pageSize` at a time.
+   * Stops cleanly at the end; break out of the loop to stop early.
+   */
+  async *iterate(options: Omit<ListOptions, "limit" | "offset"> & { pageSize?: number } = {}): AsyncGenerator<DocumentRecord<T>> {
+    const pageSize = options.pageSize ?? 200;
+    let offset = 0;
+    for (;;) {
+      const page = await this.list({ ...options, limit: pageSize, offset });
+      for (const item of page.items) {
+        yield item;
+      }
+      offset += page.items.length;
+      const total = page.pagination.count;
+      if (page.items.length < pageSize || (total !== undefined && offset >= total)) {
+        return;
+      }
+    }
+  }
+
+  /** Iterates every result of a DSL query, following cursors (or offsets when the server returns none). */
+  async *queryAll(request: Omit<QueryRequest, "cursor" | "offset"> & { pageSize?: number }): AsyncGenerator<DocumentRecord<T>> {
+    const { pageSize = 200, ...rest } = request;
+    let cursor: string | undefined;
+    let offset = 0;
+    for (;;) {
+      const page = await this.query({ ...rest, limit: pageSize, ...(cursor ? { cursor } : { offset }) });
+      for (const item of page.items) {
+        yield item;
+      }
+      offset += page.items.length;
+      cursor = page.pagination.next_cursor;
+      if (page.items.length < pageSize && !cursor) {
+        return;
+      }
+      if (page.items.length === 0 || (page.pagination.has_more === false && !cursor)) {
+        return;
+      }
+    }
+  }
+
+  /** Iterates every change since `params.since`, following the sync cursor. */
+  async *syncAll(params: Omit<SyncParams, "cursor"> = {}): AsyncGenerator<SyncChange<T>> {
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.sync({ ...params, cursor });
+      for (const change of page.items) {
+        yield change;
+      }
+      cursor = page.pagination.next_cursor;
+      if (!page.pagination.has_more || !cursor) {
+        return;
+      }
+    }
+  }
+
+  /**
+   * Streams changes to this collection (Server-Sent Events). If the connection
+   * drops it reconnects and resumes after the last `seq` delivered, so no change
+   * recorded in between is missed. A `lagged` event means this consumer fell
+   * behind; the missed changes follow it. Stop with `options.signal` or by
+   * breaking out of the loop.
+   *
+   * Events replayed after a resume do not carry `key`/`key_numeric`.
+   */
+  async *watch(options: WatchOptions = {}): AsyncGenerator<ChangeEvent> {
+    const reconnect = options.reconnect ?? true;
+    let since = options.since;
+    for (;;) {
+      if (options.signal?.aborted) return;
+      try {
+        const response = await this.client.openStream(
+          "/events",
+          { collection: this.name, since: since === undefined ? undefined : String(since) },
+          options.signal
+        );
+        for await (const event of parseSSE(response)) {
+          if (event.seq !== undefined && (since === undefined || event.seq > since)) {
+            since = event.seq;
+          }
+          yield event;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) return;
+        // An HTTP error (auth, unknown collection) will not fix itself by retrying.
+        if (error instanceof TinyDBError || !reconnect) throw error;
+      }
+      if (!reconnect || options.signal?.aborted) return;
+      await new Promise((resolve) => setTimeout(resolve, options.reconnectDelayMs ?? 1000));
+    }
+  }
+
   async schemaJson(): Promise<any> {
     const response = await this.client.requestInternal<{ schema: any }>({
       method: "GET",
@@ -907,6 +1314,36 @@ export class CollectionClient<
       parser: jsonParser,
     });
     return response.schema;
+  }
+}
+
+/** Parses a text/event-stream body into change events. Comments and pings are skipped. */
+async function* parseSSE(response: Response): AsyncGenerator<ChangeEvent> {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary: number;
+      while ((boundary = buffer.search(/\r?\n\r?\n/)) !== -1) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/, "");
+        const data = block
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (data) {
+          yield JSON.parse(data) as ChangeEvent;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
