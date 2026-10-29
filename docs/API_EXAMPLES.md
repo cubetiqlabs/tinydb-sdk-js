@@ -244,6 +244,31 @@ console.log(`Deleted ${ids.length} documents`);
 
 ---
 
+## Reliability and streaming
+
+```typescript
+import { TinyDB, RateLimitError, newIdempotencyKey } from '@tinydb/client';
+
+const db = new TinyDB({ endpoint, apiKey, retry: { retries: 3 } });
+
+// Safe to retry: the same key replays the first result instead of creating twice.
+await users.create({ name: 'Alice' }, { idempotencyKey: newIdempotencyKey() });
+
+try {
+    await users.list();
+} catch (e) {
+    if (e instanceof RateLimitError && e.retryAfterMs) await sleep(e.retryAfterMs);
+}
+
+// Resumable change stream
+let cursor = loadCursor();
+for await (const ev of users.watch({ since: cursor })) {
+    handle(ev);
+    cursor = ev.seq ?? cursor;
+    saveCursor(cursor);
+}
+```
+
 ## Querying
 
 ### Simple Equality Query
