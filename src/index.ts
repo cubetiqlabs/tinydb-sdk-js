@@ -653,6 +653,513 @@ export interface WatchOptions {
   reconnectDelayMs?: number;
 }
 
+// ---- Snapshots, webhooks, schedules, reports and ingest ----------------------
+
+export interface PageParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface Paged<T> {
+  items: T[];
+  pagination: { limit?: number; offset?: number; total?: number };
+}
+
+export interface Snapshot {
+  id: string;
+  collection_id: string;
+  collection_name?: string;
+  name: string;
+  description?: string;
+  document_count: number;
+  compressed_size: number;
+  original_size: number;
+  checksum?: string;
+  created_by?: string;
+  created_at: string;
+  expires_at?: string | null;
+}
+
+export interface CreateSnapshotOptions {
+  name: string;
+  description?: string;
+  /** RFC 3339. Past this time the server deletes the snapshot. */
+  expiresAt?: string | Date;
+}
+
+export interface RestoreSnapshotOptions {
+  /** Delete the collection's documents first (default: merge into what exists). */
+  replaceAll?: boolean;
+  /**
+   * Restore into a new collection of this name instead; nothing existing is
+   * changed and `replaceAll` is ignored.
+   */
+  targetCollection?: string;
+}
+
+export interface RestoreResult {
+  ok: boolean;
+  snapshot_id: string;
+  collection_id: string;
+  documents_restored: number;
+  replace_all?: boolean;
+  restored_at: string;
+  /** Set when restoring into a new collection. */
+  collection_name?: string;
+  source_collection?: string;
+}
+
+export interface SnapshotVerification {
+  snapshot_id: string;
+  collection_id?: string;
+  valid: boolean;
+  checksum_recorded: boolean;
+  checksum_matches?: boolean;
+  documents_recorded?: number;
+  documents_in_payload?: number;
+  collections_recorded?: number;
+  collections_in_payload?: number;
+  /** Live documents a replace-all restore would delete first. */
+  existing_documents?: number;
+  problems?: string[];
+}
+
+export interface Webhook {
+  id: string;
+  name: string;
+  description?: string;
+  url: string;
+  events: string[];
+  collection_ids?: string[];
+  headers?: Record<string, string>;
+  max_retries: number;
+  retry_backoff: number;
+  enabled: boolean;
+  total_deliveries: number;
+  successful_deliveries: number;
+  failed_deliveries: number;
+  created_at: string;
+  updated_at: string;
+  /** Signing secret: present only in the response to create and rotateSecret. */
+  secret?: string;
+}
+
+export interface WebhookInput {
+  name: string;
+  url: string;
+  events: string[];
+  description?: string;
+  collection_ids?: string[];
+  headers?: Record<string, string>;
+  max_retries?: number;
+  retry_backoff?: number;
+  enabled?: boolean;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event_type: string;
+  status: "pending" | "success" | "failed" | "retry" | string;
+  attempts: number;
+  max_attempts: number;
+  status_code?: number;
+  response_body?: string;
+  error_message?: string;
+  duration_ms?: number;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface RetentionPolicy {
+  keep_last?: number;
+  keep_days?: number;
+  keep_daily?: number;
+  keep_weekly?: number;
+  keep_monthly?: number;
+}
+
+export interface BackupSchedule {
+  id: string;
+  collection_id: string;
+  name: string;
+  description?: string;
+  cron_expression: string;
+  snapshot_type?: string;
+  retention_policy?: RetentionPolicy;
+  enabled: boolean;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleInput {
+  collection_id: string;
+  name: string;
+  /** Standard five-field cron. */
+  cron_expression: string;
+  description?: string;
+  snapshot_type?: "full" | "incremental";
+  retention_policy?: RetentionPolicy;
+  enabled?: boolean;
+}
+
+export interface BackupExecution {
+  id: string;
+  schedule_id: string;
+  status: string;
+  snapshot_id?: string;
+  document_count?: number;
+  size_bytes?: number;
+  error_message?: string;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface ReportRequest {
+  collection: string;
+  where?: WhereClause;
+  select?: string[];
+  selectOnly?: boolean;
+  orderBy?: OrderClause[];
+  groupBy?: string[];
+  aggregate?: {
+    alias: string;
+    operation: "count" | "sum" | "avg" | "min" | "max";
+    field?: string;
+    distinct?: boolean;
+  }[];
+  limit?: number;
+  offset?: number;
+}
+
+export interface ReportResult<Row = Record<string, any>> {
+  data: Row[];
+  pagination?: { limit?: number; offset?: number; count?: number; truncated?: boolean; next_cursor?: string };
+  warnings?: string[];
+}
+
+export interface IngestResult {
+  ok: boolean;
+  id?: string;
+  [key: string]: any;
+}
+
+function pageQuery(p: PageParams = {}): Record<string, string | undefined> {
+  return { limit: toQueryValue(p.limit), offset: toQueryValue(p.offset) };
+}
+
+function seg(v: string): string {
+  return encodeURIComponent(v);
+}
+
+/** Collection and tenant snapshots (backups). Reach it as `db.snapshots`. */
+export class SnapshotsClient {
+  constructor(private readonly client: TinyDB) {}
+
+  /** Snapshot a collection by id. */
+  async create(collectionId: string, options: CreateSnapshotOptions, write: WriteOptions = {}): Promise<Snapshot> {
+    return this.client.requestInternal<Snapshot>({
+      method: "POST",
+      path: `/api/collections/${seg(collectionId)}/snapshots`,
+      body: snapshotBody(options),
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  /** Snapshot a collection by name. */
+  async createByName(collectionName: string, options: CreateSnapshotOptions, write: WriteOptions = {}): Promise<Snapshot> {
+    return this.client.requestInternal<Snapshot>({
+      method: "POST",
+      path: "/api/snapshots/by-name",
+      body: { collection_name: collectionName, ...snapshotBody(options) },
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  /** Snapshot every collection of the tenant. Needs a tenant-scoped key. */
+  async createTenant(options: CreateSnapshotOptions, write: WriteOptions = {}): Promise<Snapshot> {
+    return this.client.requestInternal<Snapshot>({
+      method: "POST",
+      path: "/api/snapshots/tenant",
+      body: snapshotBody(options),
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  /** Snapshot every collection of an application. */
+  async createApp(appId: string, options: CreateSnapshotOptions, write: WriteOptions = {}): Promise<Snapshot> {
+    return this.client.requestInternal<Snapshot>({
+      method: "POST",
+      path: `/api/snapshots/app/${seg(appId)}`,
+      body: snapshotBody(options),
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  async list(collectionId: string, page: PageParams = {}): Promise<Paged<Snapshot>> {
+    return this.client.requestInternal<Paged<Snapshot>>({
+      method: "GET",
+      path: `/api/collections/${seg(collectionId)}/snapshots`,
+      query: pageQuery(page),
+      parser: jsonParser,
+    });
+  }
+
+  async get(collectionId: string, snapshotId: string): Promise<Snapshot> {
+    return this.client.requestInternal<Snapshot>({
+      method: "GET",
+      path: `/api/collections/${seg(collectionId)}/snapshots/${seg(snapshotId)}`,
+      parser: jsonParser,
+    });
+  }
+
+  async delete(collectionId: string, snapshotId: string): Promise<void> {
+    await this.client.requestInternal<void>({
+      method: "DELETE",
+      path: `/api/collections/${seg(collectionId)}/snapshots/${seg(snapshotId)}`,
+      parser: async () => undefined,
+    });
+  }
+
+  /**
+   * Restore a snapshot. With `targetCollection` it is restored into a new
+   * collection and nothing existing is touched. A snapshot that fails its
+   * integrity check is refused with a ValidationError (422) before any change.
+   */
+  async restore(collectionId: string, snapshotId: string, options: RestoreSnapshotOptions = {}): Promise<RestoreResult> {
+    const body: Record<string, any> = {};
+    if (options.targetCollection) body.target_collection = options.targetCollection;
+    else if (options.replaceAll) body.replace_all = true;
+    return this.client.requestInternal<RestoreResult>({
+      method: "POST",
+      path: `/api/collections/${seg(collectionId)}/snapshots/${seg(snapshotId)}/restore`,
+      body,
+      parser: jsonParser,
+    });
+  }
+
+  /** Check a snapshot's integrity without restoring it (a dry-run restore). */
+  async verify(collectionId: string, snapshotId: string): Promise<SnapshotVerification> {
+    return this.client.requestInternal<SnapshotVerification>({
+      method: "POST",
+      path: `/api/collections/${seg(collectionId)}/snapshots/${seg(snapshotId)}/verify`,
+      parser: jsonParser,
+    });
+  }
+
+  async verifyTenant(snapshotId: string): Promise<SnapshotVerification> {
+    return this.client.requestInternal<SnapshotVerification>({
+      method: "POST",
+      path: `/api/snapshots/tenant/${seg(snapshotId)}/verify`,
+      parser: jsonParser,
+    });
+  }
+
+  async verifyApp(snapshotId: string): Promise<SnapshotVerification> {
+    return this.client.requestInternal<SnapshotVerification>({
+      method: "POST",
+      path: `/api/snapshots/app/snapshot/${seg(snapshotId)}/verify`,
+      parser: jsonParser,
+    });
+  }
+
+  async restoreTenant(snapshotId: string, options: { replaceAll?: boolean } = {}): Promise<RestoreResult> {
+    return this.client.requestInternal<RestoreResult>({
+      method: "POST",
+      path: `/api/snapshots/tenant/${seg(snapshotId)}/restore`,
+      body: options.replaceAll ? { replace_all: true } : {},
+      parser: jsonParser,
+    });
+  }
+
+  async restoreApp(snapshotId: string, options: { replaceAll?: boolean } = {}): Promise<RestoreResult> {
+    return this.client.requestInternal<RestoreResult>({
+      method: "POST",
+      path: `/api/snapshots/app/snapshot/${seg(snapshotId)}/restore`,
+      body: options.replaceAll ? { replace_all: true } : {},
+      parser: jsonParser,
+    });
+  }
+}
+
+function snapshotBody(o: CreateSnapshotOptions): Record<string, any> {
+  return {
+    name: o.name,
+    description: o.description,
+    expires_at: o.expiresAt instanceof Date ? o.expiresAt.toISOString() : o.expiresAt,
+  };
+}
+
+/** Webhook subscriptions. Reach it as `db.webhooks`. Needs a tenant-scoped key. */
+export class WebhooksClient {
+  constructor(private readonly client: TinyDB) {}
+
+  /** Create a subscription. The response carries the signing `secret` once: store it. */
+  async create(input: WebhookInput, write: WriteOptions = {}): Promise<Webhook> {
+    return this.client.requestInternal<Webhook>({
+      method: "POST",
+      path: "/api/webhooks",
+      body: input,
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  async list(page: PageParams = {}): Promise<Paged<Webhook>> {
+    return this.client.requestInternal<Paged<Webhook>>({
+      method: "GET",
+      path: "/api/webhooks",
+      query: pageQuery(page),
+      parser: jsonParser,
+    });
+  }
+
+  async get(id: string): Promise<Webhook> {
+    return this.client.requestInternal<Webhook>({ method: "GET", path: `/api/webhooks/${seg(id)}`, parser: jsonParser });
+  }
+
+  async update(id: string, changes: Partial<WebhookInput>): Promise<Webhook> {
+    return this.client.requestInternal<Webhook>({
+      method: "PUT",
+      path: `/api/webhooks/${seg(id)}`,
+      body: changes,
+      parser: jsonParser,
+    });
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.client.requestInternal<void>({
+      method: "DELETE",
+      path: `/api/webhooks/${seg(id)}`,
+      parser: async () => undefined,
+    });
+  }
+
+  /** Send a test event now; resolves to the delivery record. */
+  async test(id: string): Promise<Record<string, any>> {
+    return this.client.requestInternal<Record<string, any>>({
+      method: "POST",
+      path: `/api/webhooks/${seg(id)}/test`,
+      parser: jsonParser,
+    });
+  }
+
+  /** Issue a new signing secret (returned once); the old one stops working at once. */
+  async rotateSecret(id: string): Promise<Webhook> {
+    return this.client.requestInternal<Webhook>({
+      method: "POST",
+      path: `/api/webhooks/${seg(id)}/rotate-secret`,
+      parser: jsonParser,
+    });
+  }
+
+  async deliveries(id: string, page: PageParams = {}): Promise<Paged<WebhookDelivery>> {
+    return this.client.requestInternal<Paged<WebhookDelivery>>({
+      method: "GET",
+      path: `/api/webhooks/${seg(id)}/deliveries`,
+      query: pageQuery(page),
+      parser: jsonParser,
+    });
+  }
+
+  async delivery(deliveryId: string): Promise<WebhookDelivery> {
+    return this.client.requestInternal<WebhookDelivery>({
+      method: "GET",
+      path: `/api/webhooks/deliveries/${seg(deliveryId)}`,
+      parser: jsonParser,
+    });
+  }
+
+  /** Queue the same event again as a new delivery (the original stays as history). */
+  async redeliver(deliveryId: string): Promise<WebhookDelivery> {
+    return this.client.requestInternal<WebhookDelivery>({
+      method: "POST",
+      path: `/api/webhooks/deliveries/${seg(deliveryId)}/redeliver`,
+      parser: jsonParser,
+    });
+  }
+
+  /** Iterate every subscription, fetching `pageSize` at a time. */
+  async *iterate(pageSize = 100): AsyncGenerator<Webhook> {
+    let offset = 0;
+    for (;;) {
+      const page = await this.list({ limit: pageSize, offset });
+      for (const w of page.items) yield w;
+      offset += page.items.length;
+      if (page.items.length < pageSize || (page.pagination.total !== undefined && offset >= page.pagination.total)) return;
+    }
+  }
+}
+
+/** Backup schedules. Reach it as `db.schedules`. Needs a tenant-scoped key. */
+export class SchedulesClient {
+  constructor(private readonly client: TinyDB) {}
+
+  async create(input: ScheduleInput, write: WriteOptions = {}): Promise<BackupSchedule> {
+    return this.client.requestInternal<BackupSchedule>({
+      method: "POST",
+      path: "/api/schedules",
+      body: input,
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
+  }
+
+  async list(page: PageParams = {}): Promise<{ schedules: BackupSchedule[]; total: number; limit: number; offset: number }> {
+    return this.client.requestInternal<{ schedules: BackupSchedule[]; total: number; limit: number; offset: number }>({
+      method: "GET",
+      path: "/api/schedules",
+      query: pageQuery(page),
+      parser: jsonParser,
+    });
+  }
+
+  async get(id: string): Promise<BackupSchedule> {
+    return this.client.requestInternal<BackupSchedule>({ method: "GET", path: `/api/schedules/${seg(id)}`, parser: jsonParser });
+  }
+
+  async update(id: string, changes: Partial<ScheduleInput>): Promise<BackupSchedule> {
+    return this.client.requestInternal<BackupSchedule>({
+      method: "PUT",
+      path: `/api/schedules/${seg(id)}`,
+      body: changes,
+      parser: jsonParser,
+    });
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.client.requestInternal<void>({
+      method: "DELETE",
+      path: `/api/schedules/${seg(id)}`,
+      parser: async () => undefined,
+    });
+  }
+
+  /** Run the schedule now; resolves to the execution record. */
+  async trigger(id: string): Promise<BackupExecution> {
+    return this.client.requestInternal<BackupExecution>({
+      method: "POST",
+      path: `/api/schedules/${seg(id)}/trigger`,
+      parser: jsonParser,
+    });
+  }
+
+  async executions(id: string, page: PageParams = {}): Promise<{ executions: BackupExecution[]; total: number; limit: number; offset: number }> {
+    return this.client.requestInternal<{ executions: BackupExecution[]; total: number; limit: number; offset: number }>({
+      method: "GET",
+      path: `/api/schedules/${seg(id)}/executions`,
+      query: pageQuery(page),
+      parser: jsonParser,
+    });
+  }
+}
+
 export class TinyDB {
   private readonly fetchImpl: FetchLike;
   private readonly endpoint: string;
@@ -942,6 +1449,49 @@ export class TinyDB {
       parser: jsonParser,
     });
     return Array.isArray(payload) ? payload : payload.items ?? [];
+  }
+
+  /** Snapshots (backups): create, list, restore, verify. */
+  get snapshots(): SnapshotsClient {
+    return new SnapshotsClient(this);
+  }
+
+  /** Webhook subscriptions, deliveries, secret rotation. Tenant-scoped key required. */
+  get webhooks(): WebhooksClient {
+    return new WebhooksClient(this);
+  }
+
+  /** Backup schedules. Tenant-scoped key required. */
+  get schedules(): SchedulesClient {
+    return new SchedulesClient(this);
+  }
+
+  /**
+   * Run a report (tabular rows, aggregates, group-by, distinct). The server
+   * supports reports on PostgreSQL only and answers 400 elsewhere.
+   */
+  async report<Row = Record<string, any>>(request: ReportRequest): Promise<ReportResult<Row>> {
+    return this.requestInternal<ReportResult<Row>>({
+      method: "POST",
+      path: "/api/query",
+      body: request,
+      parser: jsonParser,
+    });
+  }
+
+  /**
+   * Upsert one record or a batch into `entity` through the schema-light ingest
+   * path (records keyed by `external_id`). Pass an idempotency key to make a
+   * retried call safe.
+   */
+  async ingest(entity: string, records: Record<string, any> | Record<string, any>[], write: WriteOptions = {}): Promise<IngestResult> {
+    return this.requestInternal<IngestResult>({
+      method: "POST",
+      path: `/api/ingest/${seg(entity)}`,
+      body: records,
+      parser: jsonParser,
+      idempotencyKey: write.idempotencyKey,
+    });
   }
 
   async me(): Promise<Me> {

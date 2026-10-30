@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `db.snapshots`: create (by id, name, tenant, application), list, get, delete, `verify`/`verifyTenant`/`verifyApp`, and `restore` (merge, replace-all, or into a new collection via `targetCollection`).
+- `db.webhooks`: create (returns the signing secret once), list/get/update/delete, `rotateSecret`, `test`, `deliveries`, `delivery`, `redeliver`, `iterate`.
+- `db.schedules`: create/list/get/update/delete, `trigger`, `executions`.
+- `db.report()` (tabular rows, aggregates, group-by) and `db.ingest()` (schema-light upsert).
+
 - Automatic retries with exponential backoff and full jitter for network errors and `429`/`502`/`503`/`504`, honouring `Retry-After` (`retry` option; `retry: false` disables). `POST` is only retried with an idempotency key.
 - `WriteOptions.idempotencyKey` on `create()` and `newIdempotencyKey()`; sent as `Idempotency-Key`.
 - Typed errors (`UnauthorizedError`, `ForbiddenError`, `NotFoundError`, `ConflictError`, `ValidationError`, `RateLimitError`, `ServerError`), all subclasses of `TinyDBError`.
