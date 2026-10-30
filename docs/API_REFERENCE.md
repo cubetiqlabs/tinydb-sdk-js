@@ -552,6 +552,73 @@ await db.audit({ operation: 'update', limit: 50, since: new Date('2026-01-01') }
 
 ---
 
+## Snapshots, webhooks, schedules, reports and ingest
+
+Available on the client: `db.snapshots`, `db.webhooks`, `db.schedules`, `db.report()` and `db.ingest()`. `webhooks` and `schedules` need a tenant-scoped API key (an application-scoped key gets `ForbiddenError`).
+
+### Snapshots
+
+```typescript
+const snap = await db.snapshots.create(collectionId, { name: 'before-migration', expiresAt: new Date(Date.now() + 30 * 864e5) });
+await db.snapshots.createByName('orders', { name: 'nightly' });
+await db.snapshots.createTenant({ name: 'all' });          // every collection of the tenant
+await db.snapshots.createApp(appId, { name: 'app-backup' }); // every collection of an application
+
+const page = await db.snapshots.list(collectionId, { limit: 20 });
+const check = await db.snapshots.verify(collectionId, snap.id);   // dry run: check.valid, check.problems
+await db.snapshots.restore(collectionId, snap.id);                // merge into the collection
+await db.snapshots.restore(collectionId, snap.id, { replaceAll: true });
+await db.snapshots.restore(collectionId, snap.id, { targetCollection: 'orders_recovered' }); // new collection, nothing existing touched
+await db.snapshots.verifyTenant(id); await db.snapshots.restoreTenant(id); // and verifyApp / restoreApp
+await db.snapshots.delete(collectionId, snap.id);
+```
+
+A snapshot that fails its integrity check is refused with a `ValidationError` (422) before anything changes. Create calls accept `{ idempotencyKey }` as a last argument.
+
+### Webhooks
+
+```typescript
+const hook = await db.webhooks.create({ name: 'orders', url: 'https://example.com/hook', events: ['document.created'] });
+saveSecret(hook.secret);                  // shown only here and in rotateSecret()
+await db.webhooks.update(hook.id, { enabled: false });
+const fresh = await db.webhooks.rotateSecret(hook.id);
+const { items } = await db.webhooks.deliveries(hook.id, { limit: 20 });
+await db.webhooks.redeliver(items[0].id); // queue the same event again
+await db.webhooks.test(hook.id);
+for await (const w of db.webhooks.iterate()) { /* every subscription */ }
+```
+
+`get`, `list`, `delete`, `delivery(id)` are also available.
+
+### Schedules
+
+```typescript
+const sched = await db.schedules.create({
+    collection_id: collectionId,
+    name: 'nightly',
+    cron_expression: '0 3 * * *',
+    retention_policy: { keep_daily: 7, keep_weekly: 4 },
+});
+const run = await db.schedules.trigger(sched.id);
+const { executions } = await db.schedules.executions(sched.id);
+```
+
+### Reports and ingest
+
+```typescript
+// PostgreSQL servers only; other backends answer 400.
+const { data } = await db.report<{ region: string; revenue: number }>({
+    collection: 'orders',
+    groupBy: ['region'],
+    aggregate: [{ alias: 'revenue', operation: 'sum', field: 'total' }],
+});
+
+// Schema-light upsert keyed by external_id: one record or a batch.
+await db.ingest('items', [{ external_id: 'A1', name: 'Widget' }], { idempotencyKey: newIdempotencyKey() });
+```
+
+---
+
 ## Error Handling
 
 ### TinyDBError

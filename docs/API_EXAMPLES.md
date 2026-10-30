@@ -269,6 +269,24 @@ for await (const ev of users.watch({ since: cursor })) {
 }
 ```
 
+## Backups, webhooks and reports
+
+```typescript
+const snap = await db.snapshots.create(collectionId, { name: 'pre-deploy' });
+const verdict = await db.snapshots.verify(collectionId, snap.id);
+if (!verdict.valid) throw new Error(verdict.problems?.join('; '));
+
+// Recover into a new collection to inspect it first
+await db.snapshots.restore(collectionId, snap.id, { targetCollection: 'orders_recovered' });
+
+const hook = await db.webhooks.create({ name: 'sync', url: 'https://example.com/hook', events: ['document.created'] });
+console.log('store this signing secret:', hook.secret);
+
+await db.schedules.create({ collection_id: collectionId, name: 'nightly', cron_expression: '0 3 * * *', retention_policy: { keep_daily: 7 } });
+
+const { data } = await db.report({ collection: 'orders', aggregate: [{ alias: 'n', operation: 'count' }] });
+```
+
 ## Querying
 
 ### Simple Equality Query
