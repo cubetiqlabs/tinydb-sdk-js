@@ -812,7 +812,9 @@ export interface BackupExecution {
   snapshot_id?: string;
   document_count?: number;
   size_bytes?: number;
-  error_message?: string;
+  duration_ms?: number;
+  /** Why the run failed; absent on success. */
+  error?: string;
   started_at: string;
   completed_at?: string | null;
 }
